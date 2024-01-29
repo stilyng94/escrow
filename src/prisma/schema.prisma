@@ -1,0 +1,266 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator zod {
+  provider = "nestjs-zod-prisma"
+  output   = "./generated/zod"
+  imports  = "../utils/utils"
+
+  relationModel = true
+
+  generateDto = true
+
+  modelCase = "PascalCase"
+
+  modelSuffix = "Schema"
+
+  dtoCase = "PascalCase"
+
+  dtoSuffix = "Dto"
+
+  useDecimalJs = true // represent the prisma Decimal type using Decimal.js (as Prisma does)
+
+  prismaJsonNullability = true
+}
+
+model Role {
+  id        String   @id @default(dbgenerated("nanoid('rol_')")) @db.VarChar(20) ///@z.string().startsWith('rol_')
+  name      String   @unique
+  createdAt DateTime @default(now()) ///@z.coerce.date()
+  updatedAt DateTime @updatedAt ///@z.coerce.date()
+  users     User[]
+}
+
+model User {
+  id                 String               @id @default(dbgenerated("nanoid('usr_')")) @db.VarChar(20) ///@z.string().startsWith('usr_')
+  phoneNumber        String               @unique ///@z.from(imports.phoneNumberSchema)
+  username           String?
+  createdAt          DateTime             @default(now()) ///@z.coerce.date()
+  updatedAt          DateTime             @updatedAt ///@z.coerce.date()
+  refreshToken       RefreshToken[]
+  isVerified         Boolean              @default(false)
+  buyerTransactions  Transaction[]        @relation("buyerTransactions")
+  sellerTransactions Transaction[]        @relation("sellerTransactions")
+  role               Role                 @relation(fields: [roleId], references: [id])
+  roleId             String
+  dispute            Dispute[]
+  notifications      Notification[]       @relation("NotificationNotifiers")
+  notificationChange NotificationChange[] @relation("NotificationChanges")
+  wallet             Wallet?
+  email              String? ///z.string().email().optional()
+  customerCode       String?
+}
+
+model VerificationToken {
+  id String @id @default(dbgenerated("nanoid('vft_')")) @db.VarChar(20) ///@z.string().startsWith('vft_')
+
+  /// The target property of verification, e.g. "email" or "phone number"
+  target String
+
+  type      String ///@z.union([z.literal('login'),z.literal('approval')])
+  /// When it's safe to delete this token
+  expiresAt DateTime? ///@z.from(imports.nullCoerceDateSchema)
+
+  createdAt DateTime @default(now()) ///@z.coerce.date()
+  /// The secret key used to generate the otp
+  secret    String
+
+  /// The algorithm used to generate the otp
+  algorithm String
+
+  /// The number of digits in the otp
+  digits Int
+
+  /// The number of seconds the otp is valid for
+  period Int
+
+  @@unique([target, type])
+}
+
+model RefreshToken {
+  id     String @id @default(dbgenerated("nanoid('rft_')")) @db.VarChar(20) ///@z.string().startsWith('rft_')
+  token  String
+  user   User   @relation(fields: [userId], references: [id])
+  userId String ///@z.string().startsWith('usr_')
+}
+
+model Wallet {
+  id            String          @id @default(dbgenerated("nanoid('wal_')")) @db.VarChar(20) ///@z.string().startsWith('wal_')
+  createdAt     DateTime        @default(now()) ///@z.coerce.date()
+  updatedAt     DateTime        @updatedAt ///@z.coerce.date()
+  balance       Int             @default(0)
+  lockedFunds   Int             @default(0)
+  user          User            @relation(fields: [userId], references: [id])
+  userId        String          @unique @db.VarChar(20)
+  customerId    String?
+  isActive      Boolean         @default(false)
+  payment       Payment[]
+  walletHistory WalletHistory[]
+
+  @@index([userId])
+}
+
+model Transaction {
+  id                String            @id @default(dbgenerated("nanoid('txn_')")) @db.VarChar(20) ///@z.string().startsWith('txn_')
+  createdAt         DateTime          @default(now()) ///@z.coerce.date()
+  updatedAt         DateTime          @updatedAt ///@z.coerce.date()
+  transactionStatus TransactionStatus @default(initiated) ///@z.union([z.literal('initiated'),z.literal('inProgress'),z.literal('completed'),z.literal('disputed'),z.literal('declined'),z.literal('cancelled')])
+  transactionType   TransactionType ///@z.union([z.literal('electronic'),z.literal('realEstate'),z.literal('others')])
+  description       String
+  amount            Int
+  currency          String            @db.Char(3) ///z.string().max(3)
+  buyerId           String ///@z.string().startsWith('usr_')
+  buyer             User              @relation(fields: [buyerId], references: [id], name: "buyerTransactions")
+  sellerId          String ///@z.string().startsWith('usr_')
+  seller            User              @relation(fields: [sellerId], references: [id], name: "sellerTransactions")
+  docs              Doc[]
+  dispute           Dispute[]
+  deliveredOn       DateTime? ///@z.from(imports.nullCoerceDateSchema)
+  receivedOn        DateTime? ///@z.from(imports.nullCoerceDateSchema)
+}
+
+model Doc {
+  id            String       @id @default(dbgenerated("nanoid('doc_')")) @db.VarChar(20) ///@z.string().startsWith('doc_')
+  createdAt     DateTime     @default(now()) ///@z.coerce.date()
+  updatedAt     DateTime     @updatedAt ///@z.coerce.date()
+  src           String
+  name          String
+  mimetype      String
+  Transaction   Transaction? @relation(fields: [transactionId], references: [id])
+  transactionId String?      @db.VarChar(20)
+}
+
+model Dispute {
+  id               String        @id @default(dbgenerated("nanoid('dis_')")) @db.VarChar(20) ///@z.string().startsWith('dis_')
+  createdAt        DateTime      @default(now()) ///@z.coerce.date()
+  updatedAt        DateTime      @updatedAt ///@z.coerce.date()
+  user             User          @relation(fields: [userId], references: [id])
+  disputeDetail    String        @db.VarChar(250)
+  status           DisputeStatus @default(pending) ///@z.union([z.literal('pending'),z.literal('resolved')])
+  transaction      Transaction   @relation(fields: [transactionId], references: [id])
+  transactionId    String        @unique ///@z.string().startsWith('txn_')
+  userId           String
+  resolutionDetail String        @db.VarChar(250)
+}
+
+enum TransactionStatus {
+  initiated
+  inProgress
+  completed
+  disputed
+  declined
+  cancelled
+}
+
+enum TransactionType {
+  electronic
+  realEstate
+  others
+}
+
+enum NotificationType {
+  dispute
+  milestoneReached
+  others
+  initialTransaction
+}
+
+enum DisputeStatus {
+  pending
+  resolved
+}
+
+// NotificationObject model
+model NotificationObject {
+  id                 String               @id @default(dbgenerated("nanoid('nob_')")) @db.VarChar(20) ///@z.string().startsWith('nob_')
+  entityId           String // id of particular entitty data
+  notifications      Notification[]
+  NotificationChange NotificationChange[]
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  entityType         EntityType ///@z.union([z.literal('transactions'),z.literal('wallets'),z.literal('docs'),z.literal('disputes'),z.literal('users')])
+
+  @@index([entityType])
+}
+
+// Notification model
+model Notification {
+  id                   String             @id @default(dbgenerated("nanoid('ntn_')")) @db.VarChar(20) ///@z.string().startsWith('ntn_')
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  status               Int                @default(0) @db.Oid()
+  notificationObjectId String
+  notificationObject   NotificationObject @relation(fields: [notificationObjectId], references: [id])
+  notifier             User               @relation("NotificationNotifiers", fields: [notifierId], references: [id])
+  notifierId           String
+}
+
+// NotificationChange model
+model NotificationChange {
+  id                   String             @id @default(dbgenerated("nanoid('ntc_')")) @db.VarChar(20) ///@z.string().startsWith('ntc_')
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  notificationObjectId String
+  notificationObject   NotificationObject @relation(fields: [notificationObjectId], references: [id])
+  actorId              String
+  actor                User               @relation("NotificationChanges", fields: [actorId], references: [id])
+}
+
+enum EntityType {
+  transactions
+  disputes
+  wallets
+  docs
+  users
+}
+
+model Payment {
+  id          String        @id @default(dbgenerated("nanoid('pay_')")) @db.VarChar(20) ///@z.string().startsWith('pay_')
+  status      PaymentStatus @default(pending) ///@z.union([z.literal('failed'),z.literal('success'),z.literal('pending')])
+  reference   String        @unique
+  wallet      Wallet        @relation(fields: [walletId], references: [id])
+  walletId    String        @db.VarChar(20)
+  metadata    Json
+  amount      Int
+  paymentType PaymentType ///@z.union([z.literal('funding'),z.literal('withdrawal')])
+
+  @@index([reference])
+}
+
+enum PaymentType {
+  funding
+  withdrawal
+}
+
+enum PaymentStatus {
+  success
+  failed
+  pending
+}
+
+model WalletHistory {
+  id          String            @id @default(dbgenerated("nanoid('wal_h_')")) ///@z.string().startsWith('pay_')
+  historyType WalletHistoryType //@z.union([z.literal('locked'),z.literal('funding'),z.literal('released'),z.literal('returned')])
+  amount      Int
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  walletId    String
+  wallet      Wallet            @relation(fields: [walletId], references: [id])
+}
+
+enum WalletHistoryType {
+  locked
+  released
+  funding
+  withdrawal
+  returned
+}
